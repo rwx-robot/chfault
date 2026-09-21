@@ -30,17 +30,19 @@ import (
 // 架构上 node 不做任何业务逻辑 —— 它只负责把组件按正确顺序启动、
 // 把依赖注入到正确的位置、并在关闭时按相反顺序优雅停止。
 type Node struct {
-	cfg       *Config
-	logger    *slog.Logger
-	store     storage.KVStore
-	chain     *chain.Chain
-	pool      *mempool.Pool
-	rpcSrv    *rpc.Server
-	registry  *rpc.Registry
-	evm       *vm.Engine
-	consensus *consensus.State
-	devKey    *devSigner
-	swarm     *network.Swarm
+	cfg        *Config
+	logger     *slog.Logger
+	store      storage.KVStore
+	chain      *chain.Chain
+	pool       *mempool.Pool
+	rpcSrv     *rpc.Server
+	registry   *rpc.Registry
+	evm        *vm.Engine
+	consensus  *consensus.State
+	devKey     *devSigner
+	swarm      *network.Swarm
+	gossipSeen map[types.TxHash]bool
+	gossipMu   sync.Mutex
 	// pendingBuilt 最近一次生成的待提交区块（共识提交时使用）
 	pendingBuilt *BuiltBlock
 
@@ -404,6 +406,9 @@ func (n *Node) SubmitRawTx(data []byte) (types.TxHash, error) {
 	if err := n.pool.Add(gtx, sender, accountNonce); err != nil {
 		return types.TxHash{}, err
 	}
+
+	// 交易 gossip：广播给邻居（邻居入池后继续转发，seen 集合防循环）
+	n.gossipTx(data)
 
 	return types.TxHash(gtx.Hash()), nil
 }

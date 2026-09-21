@@ -134,14 +134,27 @@ func (tx *Transaction) Encode() ([]byte, error) {
 		return nil, err
 	}
 
-	out := make([]byte, 0, len(payload)+65+1)
+	out := make([]byte, 0, len(payload)+65+1+types.HashLen+1)
 	if tx.Type != TxTypeLegacy {
 		out = append(out, byte(tx.Type))
 	}
 	out = append(out, payload...)
 	out = append(out, tx.Signature[:]...)
 
-	if len(out) > types.MaxTxSize {
+	// 规范哈希段（v3.1 新增）：
+	// 0x00 = 无缓存（接收方按自己的布局计算）
+	// 0x01 = 后跟 32 字节规范哈希（geth 语义）
+	// ⚠️ 必须持久化：tx_root / FindTx 索引 / SubmitRawTx 返回值三者
+	// 都依赖这个哈希 —— 不持久化则编码-解码往返后哈希改变（tx_root 校验
+	// 会失败，多节点实测复现）。
+	if tx.Hash_ != nil {
+		out = append(out, 0x01)
+		out = append(out, (*tx.Hash_).Bytes()...)
+	} else {
+		out = append(out, 0x00)
+	}
+
+	if len(out) > types.MaxTxSize+types.HashLen+1 {
 		return nil, types.ErrOversized
 	}
 	return out, nil

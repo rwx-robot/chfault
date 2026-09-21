@@ -2,6 +2,7 @@ package node_test
 
 import (
 	"context"
+	"math/big"
 	"testing"
 	"time"
 
@@ -237,4 +238,66 @@ func TestMultiNode_MultipleHeights(t *testing.T) {
 			t.Fatalf("节点 %d 高度错误", i)
 		}
 	}
+}
+
+// TestMultiNode_TxGossip 验证交易 gossip：
+// 向非提议者节点提交交易 → 全网可见 → 提议者打包 → 全链生效。
+func TestMultiNode_TxGossip(t *testing.T) {
+	m := newMultiNodeCluster(t, 3)
+
+	// 找高度 1 的提议者（排序后 vals[(1+0)%3]）
+	proposerAddr := m.nodes[0].Consensus().Validators().ProposerOf(1, 0)
+
+	// 向一个**非提议者**节点提交交易
+	var submitNode *node.Node
+	for _, nd := range m.nodes {
+		if devAddr(byte(1)) != proposerAddr {
+			submitNode = nd
+			break
+		}
+	}
+	if submitNode == nil {
+		t.Fatal("找不到非提议者节点")
+	}
+
+	to := mkFundedAddr(t, 0x12)
+	raw := signTransfer(t, 0x11, 0, to,
+		big.NewInt(1_000_000_000_000_000_000), 2, 10, 21000)
+	hash, err := submitNode.SubmitRawTx(raw)
+	if err != nil {
+		t.Fatalf("提交失败: %v", err)
+	}
+
+	// 等待 gossip 传播（最多 2 秒）
+	deadline := time.Now().Add(2 * time.Second)
+	gotCount := 0
+	for time.Now().Before(deadline) {
+		gotCount = 0
+		for _, nd := range m.nodes {
+			if _, ok := nd.PoolGet(types.TxHash(hash)); ok {
+				gotCount++
+			}
+		}
+		if gotCount == len(m.nodes) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if gotCount != len(m.nodes) {
+		t.Fatalf("gossip 后 %d/%d 节点池内有交易", gotCount, len(m.nodes))
+	}
+
+	// 推进共识 → 交易被打包
+	m.advanceAll(t, 1)
+
+	// 交易可查
+	loc, err := m.nodes[0].Chain().FindTx(types.TxHash(hash))
+	if err != nil {
+		t.Fatalf("交易应在链上: %v", err)
+	}
+	if loc.Height != 1 {
+		t.Fatalf("交易应在高度 1，实际 %d", loc.Height)
+	}
+
+	t.Log("交易 gossip 全链路：提交 → 传播 → 打包 → 上链")
 }

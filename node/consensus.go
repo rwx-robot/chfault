@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -190,6 +191,7 @@ func (n *Node) CommitBlock(blockData []byte, height types.Height) error {
 		// 非提议者路径：从共识消息解码
 		b, err := chain.DecodeBlock(blockData)
 		if err != nil {
+			n.logger.Error("CommitBlock 解码失败", "height", uint64(height), "err", err)
 			return fmt.Errorf("node: 解码共识区块失败: %w", err)
 		}
 		blk = b
@@ -197,6 +199,7 @@ func (n *Node) CommitBlock(blockData []byte, height types.Height) error {
 	}
 
 	if err := n.chain.AppendBlock(blk, nil); err != nil {
+		n.logger.Error("CommitBlock 追加失败", "height", uint64(height), "err", err)
 		return err
 	}
 	if gethTxs != nil {
@@ -291,10 +294,51 @@ func (n *Node) handleNetworkMessage(from string, env *network.Envelope) {
 			// 非法消息只记录（重复投票等由发送者负责）
 			n.logger.Debug("共识消息处理失败", "err", err)
 		}
+	case network.TypeTx:
+		// 交易 gossip：收到邻居的交易 → 入本地池 → 转发给其他邻居
+		var payload struct {
+			Raw []byte `json:"raw"`
+		}
+		if err := json.Unmarshal(env.Payload, &payload); err != nil || len(payload.Raw) == 0 {
+			n.logger.Warn("交易消息非法", "from", from)
+			return
+		}
+		if _, err := n.SubmitRawTx(payload.Raw); err != nil {
+			// 重复/非法交易静默（gossip 冗余是正常的）
+			n.logger.Debug("gossip 交易入池失败", "err", err)
+			return
+		}
+		// 继续转发（SubmitRawTx 内部也会广播 —— 用 seen set 防循环，
+		// 见 gossipTx 的 seen 检查）
+		n.gossipTx(payload.Raw)
 	case network.TypePing:
 		// 保活：v0 忽略
 	default:
 		n.logger.Debug("未知消息类型", "type", env.Type)
+	}
+}
+
+// gossipTx 把原始交易广播给所有 peer（SubmitRawTx 成功后调用）。
+//
+// 防循环：seen 哈希集合（gossipSeen），上限 4096 简单清理。
+func (n *Node) gossipTx(raw []byte) {
+	h := types.TxHash(crypto.Keccak256(raw))
+	n.gossipMu.Lock()
+	if n.gossipSeen == nil {
+		n.gossipSeen = make(map[types.TxHash]bool)
+	}
+	if n.gossipSeen[h] {
+		n.gossipMu.Unlock()
+		return
+	}
+	n.gossipSeen[h] = true
+	if len(n.gossipSeen) > 4096 {
+		n.gossipSeen = make(map[types.TxHash]bool) // v0：粗暴清理
+	}
+	n.gossipMu.Unlock()
+
+	if n.swarm != nil {
+		n.swarm.Broadcast(network.NewTxEnvelope(raw))
 	}
 }
 
@@ -334,4 +378,9 @@ func (n *Node) ConnectPeer(addr string) error {
 		return errors.New("node: 网络未启用")
 	}
 	return n.swarm.Connect(addr)
+}
+
+// PoolGet 按哈希查询池内交易（测试与运维用）。
+func (n *Node) PoolGet(hash types.TxHash) (*gethTypes.Transaction, bool) {
+	return n.pool.Get(hash)
 }

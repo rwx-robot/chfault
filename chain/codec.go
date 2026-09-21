@@ -150,6 +150,25 @@ func DecodeTx(data []byte) (*Transaction, error) {
 		rest = rest[types.SignatureLen:]
 	}
 
+	// 规范哈希段（v3.1）：0x00 无 / 0x01 + 32 字节
+	if len(rest) >= 1 {
+		flag := rest[0]
+		rest = rest[1:]
+		switch flag {
+		case 0x00:
+			// 无缓存哈希
+		case 0x01:
+			if len(rest) < types.HashLen {
+				return nil, fmt.Errorf("%w: 规范哈希被截断", ErrCodec)
+			}
+			h := types.TxHash(rest[:types.HashLen])
+			tx.Hash_ = &h
+			rest = rest[types.HashLen:]
+		default:
+			return nil, fmt.Errorf("%w: 未知哈希段标记 %d", ErrCodec, flag)
+		}
+	}
+
 	if len(rest) != 0 {
 		return nil, fmt.Errorf("%w: 交易解析后仍有 %d 字节剩余", ErrCodec, len(rest))
 	}

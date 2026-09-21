@@ -215,10 +215,13 @@ func NewConsensusEnvelope(msg *cconsensus.Message) (*Envelope, error) {
 	return &Envelope{Type: TypeConsensus, Payload: payload}, nil
 }
 
-// NewTxEnvelope 构造交易信封。
+// NewTxEnvelope 构造交易信封（payload = {"raw": base64}，
+// 与 node.handleNetworkMessage 的解析端匹配）。
 func NewTxEnvelope(rawTx []byte) *Envelope {
-	// base64 由 encoding/json 自动处理 []byte
-	return &Envelope{Type: TypeTx, Payload: json.RawMessage(mustJSON(rawTx))}
+	b, _ := json.Marshal(struct {
+		Raw []byte `json:"raw"`
+	}{Raw: rawTx})
+	return &Envelope{Type: TypeTx, Payload: b}
 }
 
 func mustJSON(v any) []byte {
