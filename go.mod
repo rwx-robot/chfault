@@ -7,6 +7,7 @@ require (
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
 	github.com/ethereum/go-ethereum v1.17.5
 	github.com/holiman/uint256 v1.3.2
+	github.com/kilic/bls12-381 v0.1.0
 	golang.org/x/crypto v0.57.0
 	golang.org/x/tools v0.50.0
 	gopkg.in/yaml.v3 v3.0.1

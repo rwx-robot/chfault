@@ -42,7 +42,7 @@ func Sign(digest types.Hash, privKey *secp256k1.PrivateKey) (types.Signature, er
 	}
 
 	// 重排为 r ‖ s ‖ v
-	copy(out[0:32], compact[1:33])  // r
+	copy(out[0:32], compact[1:33])   // r
 	copy(out[32:64], compact[33:65]) // s
 
 	// 从头部字节提取 recovery id

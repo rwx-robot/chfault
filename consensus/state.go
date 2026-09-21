@@ -40,6 +40,23 @@ type Config struct {
 	// ValidateBlock 块验证回调（委托上层：chain 校验 + EVM 执行）。
 	// 返回 nil 表示合法。
 	ValidateBlock func(blockData []byte, height types.Height, parentHash types.BlockHash) error
+	// BLSSigner BLS 聚合签名能力（ADR-014）。
+	// nil = 逐个验签模式（兼容）。
+	BLSSigner BLSSigner
+}
+
+// BLSSigner 是 BLS 聚合签名的抽象（consensus 不直接依赖 bls 包）。
+type BLSSigner interface {
+	// SignBLS 用验证者的 BLS 密钥签名。
+	SignBLS(msg []byte) (sig []byte, err error)
+	// BLSPublicKey 本验证者的 BLS 公钥。
+	BLSPublicKey() []byte
+	// BLSPublicKeyOf 取指定验证者的 BLS 公钥（验证者集内）。
+	BLSPublicKeyOf(addr types.Address) ([]byte, bool)
+	// BLSPubKeysByAddrs 批量取公钥（QC 验证用；缺一返回 false）。
+	BLSPubKeysByAddrs(addrs []types.Address) ([][]byte, bool)
+	// BLSFastVerify 同消息多方聚合验证。
+	BLSFastVerify(pks [][]byte, msg []byte, sig []byte) bool
 }
 
 // Signer 是签名抽象（确定性注入：仿真与真实环境共用接口）。
@@ -161,6 +178,9 @@ func (vs *voteSet) QCOf(height types.Height) *QC {
 // 共识状态机
 // ============================================================================
 
+// blsAggKey 保留类型（BLS 能力经 Config.BLSSigner 注入，此类型暂未使用）。
+type blsAggKey struct{}
+
 // State 是单个共识实例（一个验证者）的状态机。
 type State struct {
 	cfg    Config
@@ -190,6 +210,9 @@ type State struct {
 
 	// makeProposal 出块回调（node 注入）
 	makeProposal func(height types.Height, timestamp uint64) *BlockProposal
+
+	// blsKeys 保留字段（BLS 能力经 Config.BLSSigner 注入）
+	blsKeys map[types.Address]*blsAggKey
 
 	// pendingSelf 待自投递消息（跳轮时从缓存取出，由 harness 投回给自己）。
 	pendingSelf *Message
@@ -225,6 +248,7 @@ func NewState(cfg Config, out Outgoing, commit CommitSink) (*State, error) {
 		commit:            commit,
 		futureProps:       make(map[types.Round]*Message),
 		futureHeightProps: make(map[types.Height]*Message),
+		blsKeys:           make(map[types.Address]*blsAggKey),
 	}, nil
 }
 
@@ -491,12 +515,21 @@ func (s *State) commitByHash(blockHash types.Hash) {
 
 // VerifyQC 验证 QC：签名数量达到法定人数 + 每个签名可验证。
 //
-// v0 逐个验签（ADR-014 预留 BLS 聚合）。
+// 两级路径（ADR-014 落地）：
+//  1. AggSig 非空 → BLS 聚合验证（**一次配对**，n 无关 —— M2 完成态）
+//  2. 否则逐个验签（兼容模式，n 次验证 —— 调试与早期网络）
 func (s *State) VerifyQC(qc *QC) bool {
 	quorum := s.cfg.Validators.Quorum()
 	if uint64(len(qc.Signatures)) < quorum {
 		return false
 	}
+
+	// ---- BLS 聚合路径（O(1) 配对）----
+	if len(qc.AggSig) > 0 && len(qc.AggBitmap) > 0 && s.cfg.BLSSigner != nil {
+		return s.verifyQCBLS(qc)
+	}
+
+	// ---- 逐个验签路径（兼容）----
 	// 签名必须按地址排序（确定性检查）
 	for i := 1; i < len(qc.Signatures); i++ {
 		if qc.Signatures[i].Validator.Compare(qc.Signatures[i-1].Validator) < 0 {
@@ -514,6 +547,100 @@ func (s *State) VerifyQC(qc *QC) bool {
 		}
 	}
 	return true
+}
+
+// verifyQCBLS BLS 聚合验证路径。
+//
+// 位图 → 签名者地址列表 → 批量取公钥 → FastAggregateVerify。
+// 位图与 Signatures 的地址列表必须一致（防位图伪造）。
+func (s *State) verifyQCBLS(qc *QC) bool {
+	size := s.cfg.Validators.Size()
+	// 位图长度检查
+	if len(qc.AggBitmap) != (size+7)/8 {
+		return false
+	}
+
+	// ⚠️ 越界位必须为 0（实测 bug：size=4 时 bit4-7 被静默忽略，
+	// 攻击者可在位图高位塞垃圾 —— 严格解析是安全基线）
+	for i := size; i < len(qc.AggBitmap)*8; i++ {
+		if qc.AggBitmap[i/8]&(1<<(i%8)) != 0 {
+			return false
+		}
+	}
+
+	// 位图 → 地址（按验证者集顺序）
+	addrs := make([]types.Address, 0, size)
+	for i := 0; i < size; i++ {
+		if qc.AggBitmap[i/8]&(1<<(i%8)) != 0 {
+			val, ok := s.cfg.Validators.At(i)
+			if !ok {
+				return false
+			}
+			addrs = append(addrs, val.Address)
+		}
+	}
+
+	// 位图数量必须与 Signatures 数量一致（且地址集合一致）
+	if len(addrs) != len(qc.Signatures) {
+		return false
+	}
+	sigAddrs := make(map[types.Address]bool, len(qc.Signatures))
+	for _, sig := range qc.Signatures {
+		sigAddrs[sig.Validator] = true
+	}
+	for _, a := range addrs {
+		if !sigAddrs[a] {
+			return false
+		}
+	}
+
+	// 公钥 + 快速聚合验证（同 digest 的多方签名）
+	pks, ok := s.cfg.BLSSigner.BLSPubKeysByAddrs(addrs)
+	if !ok {
+		return false
+	}
+	v := Vote{Type: qc.Type, BlockHash: qc.BlockHash}
+	digest := s.voteDigest(qc.Height, qc.Round, v)
+	return s.cfg.BLSSigner.BLSFastVerify(pks, digest.Bytes(), qc.AggSig)
+}
+
+// BuildAggSig 从逐个签名构造 BLS 聚合签名（QC 广播前由提议者调用）。
+//
+// 步骤：位图 + 逐个 BLS 聚合。依赖 BLSSigner 提供每个签名者的 BLS 公钥。
+// 任一签名者缺 BLS 公钥 → 返回错误（调用方退回逐个验签模式）。
+func (s *State) BuildAggSig(qc *QC) error {
+	if s.cfg.BLSSigner == nil {
+		return errors.New("consensus: BLSSigner 未配置，无法构造聚合签名")
+	}
+	size := s.cfg.Validators.Size()
+	bitmap := make([]byte, (size+7)/8)
+
+	// 位图（按验证者集顺序）
+	for _, sig := range qc.Signatures {
+		idx := s.cfg.Validators.Get(sig.Validator)
+		if idx < 0 {
+			return fmt.Errorf("%w: QC 含集外验证者", ErrInvalidMessage)
+		}
+		bitmap[idx/8] |= 1 << (idx % 8)
+	}
+
+	// BLS 聚合（用每个签名者的 BLS 公钥无法直接聚合签名 ——
+	// 聚合是对签名值的 G1 加法，与公钥无关）
+	sigs := make([][]byte, 0, len(qc.Signatures))
+	addrs := make([]types.Address, 0, len(qc.Signatures))
+	for _, sig := range qc.Signatures {
+		sigs = append(sigs, sig.Sig[:])
+		addrs = append(addrs, sig.Validator)
+	}
+	_ = sigs
+	_ = addrs
+	_ = bitmap
+
+	// 聚合签名的实际构造需要各签名者的 BLS 签名（而非 secp256k1）——
+	// 见 castVote：投票时同时携带 BLS 签名（Vote 扩展）。
+	// v0 折衷：聚合验证走 Secp256k1 逐个验签 + BLS 位图通道就绪。
+	// M2.x：Vote 加 BLSSig 字段后此函数完成聚合。
+	return errors.New("consensus: BLS 投票签名尚未进入 Vote wire（M2.x）")
 }
 
 // handleVote 处理投票。

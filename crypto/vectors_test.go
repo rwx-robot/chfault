@@ -31,22 +31,22 @@ func vectorsFile(t *testing.T, name string) string {
 // ============================================================================
 
 type keccakVector struct {
-	Name        string `json:"name"`
-	InputHex    string `json:"input_hex"`
-	InputASCII  string `json:"input_ascii"`
-	Expected    string `json:"expected"`
-	Source      string `json:"source"`
+	Name         string `json:"name"`
+	InputHex     string `json:"input_hex"`
+	InputASCII   string `json:"input_ascii"`
+	Expected     string `json:"expected"`
+	Source       string `json:"source"`
 	WhyImportant string `json:"why_important"`
 }
 
 type cryptoVectors struct {
 	Keccak256         []keccakVector `json:"keccak256"`
 	AddressDerivation []struct {
-		Name                 string `json:"name"`
-		PrivateKey           string `json:"private_key"`
+		Name                  string `json:"name"`
+		PrivateKey            string `json:"private_key"`
 		PublicKeyUncompressed string `json:"public_key_uncompressed"`
-		Address              string `json:"address"`
-		AddressEIP55         string `json:"address_eip55"`
+		Address               string `json:"address"`
+		AddressEIP55          string `json:"address_eip55"`
 	} `json:"address_derivation"`
 }
 

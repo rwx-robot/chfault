@@ -104,7 +104,12 @@ func (Vote) isConsensusMsg() {}
 
 // QC 是聚合证书（n/3*2+1 票的聚合证明）。
 //
-// v0 携带逐个签名（ADR-014：BLS 聚合接口预留，v1 替换）。
+// 两级签名验证（ADR-014 落地）：
+//   - AggSig 非空：BLS 聚合签名（优先 —— 一次配对验证，O(1)）
+//   - AggSig 为空：退回逐个验签（兼容 v3.1 早期与调试模式）
+//
+// Signatures 在两种模式下都保留：块同步方需要重建聚合，
+// 审计方需要逐个核对（QC 的证据材料）。
 type QC struct {
 	Type      VoteType
 	Height    types.Height
@@ -112,6 +117,11 @@ type QC struct {
 	BlockHash types.Hash
 	// Signatures 签名列表（按验证者地址排序 —— 确定性）。
 	Signatures []QCSignature
+	// AggSig BLS 聚合签名（48 字节，可空 —— 兼容模式）。
+	AggSig []byte
+	// AggBitmap 签名者位图（按验证者集排序的第 i 位 = 第 i 个验证者已签）。
+	// nil 时 AggSig 无效（逐个验签模式）。
+	AggBitmap []byte
 }
 
 func (QC) isConsensusMsg() {}
