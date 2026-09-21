@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"maps"
 	"slices"
 	"sort"
@@ -22,14 +23,22 @@ type MemoryManager struct {
 	// states 保存历史状态快照：stateRoot → 账户集合。
 	// 真实实现会用 MPT 并按版本复用节点，这里简化为整体快照。
 	states map[types.StateRoot]map[types.Address]*Account
-	codes  map[types.Hash][]byte
+	// storageStates 保存历史存储快照：stateRoot → 存储槽集合。
+	//
+	// ⚠️ 必须与 states 成对存在（多节点 ERC20 实测教训）：
+	// 若 Commit 只快照账户而丢存储槽，后续高度的 SLOAD 全部返回 0
+	// —— 合约存储整体蒸发，但 stateRoot 校验却通过（因为 root 计算
+	// 用的是本 session 的 storage）。 Begin 按父根恢复此快照。
+	storageStates map[types.StateRoot]map[storageKey]types.Hash
+	codes         map[types.Hash][]byte
 }
 
 // NewMemoryManager 创建内存状态管理器。
 func NewMemoryManager() *MemoryManager {
 	return &MemoryManager{
-		states: make(map[types.StateRoot]map[types.Address]*Account),
-		codes:  make(map[types.Hash][]byte),
+		states:        make(map[types.StateRoot]map[types.Address]*Account),
+		storageStates: make(map[types.StateRoot]map[storageKey]types.Hash),
+		codes:         make(map[types.Hash][]byte),
 	}
 }
 
@@ -53,11 +62,28 @@ func (m *MemoryManager) Begin(parent types.StateRoot) (Session, error) {
 		return nil, ErrAccountNotFound
 	}
 
+	// 恢复存储基线（父快照的槽位 + session 内增量修改）
+	storage := make(map[storageKey]types.Hash)
+	if parentStorage, ok := m.storageStates[parent]; ok {
+		// map 复制本身与顺序无关，但显式收集键以满足 linter 的
+		// "顺序可复现"约束
+		keys := slices.Collect(maps.Keys(parentStorage))
+		slices.SortFunc(keys, func(a, b storageKey) int {
+			if c := a.addr.Compare(b.addr); c != 0 {
+				return c
+			}
+			return bytes.Compare(a.slot[:], b.slot[:])
+		})
+		for _, k := range keys {
+			storage[k] = parentStorage[k]
+		}
+	}
+
 	return &memorySession{
 		mgr:      m,
 		parent:   parent,
 		accounts: accounts,
-		storage:  make(map[storageKey]types.Hash),
+		storage:  storage,
 	}, nil
 }
 
@@ -76,9 +102,9 @@ func (m *MemoryManager) View(root types.StateRoot) (ReadOnly, error) {
 
 // journalEntry 是一条可撤销的操作记录。
 type journalEntry struct {
-	kind  entryKind
-	addr  types.Address
-	slot  types.Hash
+	kind entryKind
+	addr types.Address
+	slot types.Hash
 	// 旧值：账户整体、存储槽值、或代码
 	oldAcc   *Account
 	oldValue types.Hash
@@ -282,6 +308,11 @@ func (s *memorySession) Commit() (types.StateRoot, error) {
 		snapshot[addr] = &copied
 	}
 	s.mgr.states[root] = snapshot
+
+	// ⚠️ 存储快照与账户快照成对保存（新根 = 父存储 + 本 session 变更，
+	// Begin 时已把父存储合并进 s.storage，此处直接快照即可）
+	storageSnap := maps.Clone(s.storage)
+	s.mgr.storageStates[root] = storageSnap
 
 	return root, nil
 }

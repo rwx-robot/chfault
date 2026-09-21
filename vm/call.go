@@ -43,7 +43,8 @@ func (e *Engine) RunCall(
 		Difficulty:  bigNewInt(0),
 		BaseFee:     bigNewInt(0), // eth_call 无 gas 费
 		GasLimit:    uint64(ctx.GasLimit),
-		Random:      nil,
+		// 与 RunTx 同理：Random 非 nil 是时间 fork（PUSH0 等）激活的前提
+		Random: randomOf(uint64(ctx.Height)),
 	}
 
 	txCtx := gethVM.TxContext{

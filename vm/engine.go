@@ -25,6 +25,7 @@ import (
 	gethParams "github.com/ethereum/go-ethereum/params"
 	gethU256 "github.com/holiman/uint256"
 
+	"github.com/chfault/chfault/crypto"
 	"github.com/chfault/chfault/state"
 	"github.com/chfault/chfault/types"
 )
@@ -197,7 +198,12 @@ func (e *Engine) RunTx(
 		Difficulty:  big.NewInt(0), // PoS 后为 0
 		BaseFee:     new(big.Int).SetBytes(ctx.BaseFee[:]),
 		GasLimit:    uint64(ctx.GasLimit),
-		Random:      nil,
+		// ⚠️ Random 必须非 nil：geth 的 Rules() 以 isMerge(Random!=nil) 为
+		// 时间戳 fork（Shanghai/Cancun → PUSH0 等）的激活前提。
+		// Random=nil → isMerge=false → 表退回 London → 合约全部执行失败
+		// （多节点 ERC20 实测复现：invalid opcode: PUSH0）。
+		// PoS 语义下 PREVRANDAO = 确定性派生值。
+		Random: randomOf(uint64(ctx.Height)),
 	}
 
 	// ---- 交易上下文（v1.17.5：通过 SetTxContext 设置，不再走 NewEVM 参数）----
@@ -299,4 +305,11 @@ func mustUint256(v *big.Int) types.Uint256 {
 		panic(fmt.Sprintf("vm: gas price 转换溢出: %v", err))
 	}
 	return out
+}
+
+// randomOf 返回高度的确定性 PREVRANDAO（非 nil —— geth 以此判定 post-merge，
+// 从而激活 Shanghai/Cancun 的时间戳 fork）。
+func randomOf(height uint64) *gethCommon.Hash {
+	h := gethCommon.Hash(crypto.Keccak256(crypto.Uint64BE(height)))
+	return &h
 }

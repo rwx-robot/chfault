@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"os"
 	"strings"
@@ -33,19 +34,24 @@ type BlockBuilder struct {
 	evm      *vm.Engine
 	baseFee  types.Uint256
 	gasLimit types.Gas
+	logger   *slog.Logger
 	// proposer M1 固定占位；M2 由共识提供
 	proposer types.Address
 }
 
 // NewBlockBuilder 创建出块器。
 func NewBlockBuilder(c *chain.Chain, pool *mempool.Pool, eng *vm.Engine,
-	baseFee types.Uint256, gasLimit types.Gas) *BlockBuilder {
+	baseFee types.Uint256, gasLimit types.Gas, logger *slog.Logger) *BlockBuilder {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &BlockBuilder{
 		chain:    c,
 		pool:     pool,
 		evm:      eng,
 		baseFee:  baseFee,
 		gasLimit: gasLimit,
+		logger:   logger,
 		proposer: types.Address{0x01}, // M1 单节点占位
 	}
 }
@@ -98,7 +104,12 @@ func (b *BlockBuilder) BuildBlock(parent chain.Head) (*BuiltBlock, error) {
 		result, err := b.evm.RunTx(sess, sel.Tx, sel.Sender, execCtx)
 		if err != nil {
 			// 执行层错误（非 revert）：跳过该交易，不入块
+			b.logger.Warn("交易执行异常，跳过", "err", err)
 			continue
+		}
+		if !result.Success && result.VMError != "" {
+			b.logger.Warn("交易 revert",
+				"vmErr", result.VMError, "gasUsed", uint64(result.GasUsed))
 		}
 
 		cumulative += result.GasUsed // 失败的交易也计 gas
@@ -164,7 +175,7 @@ func (b *BlockBuilder) validatorSetHash() (types.Hash, error) {
 
 // blockBuilder 构造出块器（依赖注入集中点）。
 func (n *Node) blockBuilder() *BlockBuilder {
-	return NewBlockBuilder(n.chain, n.pool, n.evm, n.pool.BaseFee(), 30_000_000)
+	return NewBlockBuilder(n.chain, n.pool, n.evm, n.pool.BaseFee(), 30_000_000, n.logger)
 }
 
 // ProduceBlockOnce 打包并追加一个区块（导出供测试与 M2 共识调用）。

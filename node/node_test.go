@@ -2,6 +2,7 @@ package node_test
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"math/big"
 	"testing"
 	"time"
@@ -52,10 +53,7 @@ func hexStr(b []byte) string {
 func signTransfer(t *testing.T, seed byte, nonce uint64, to types.Address,
 	valueWei *big.Int, tipGwei, maxFeeGwei, gas uint64) []byte {
 	t.Helper()
-	key, err := gethCrypto.HexToECDSA(hexStr(seedBytes(seed)))
-	if err != nil {
-		t.Fatalf("生成密钥失败: %v", err)
-	}
+	key := loadDevKey(t, seed)
 	toG := gethCommon.Address(to)
 	tx := gethTypes.NewTx(&gethTypes.DynamicFeeTx{
 		ChainID:   big.NewInt(testChainID),
@@ -66,11 +64,34 @@ func signTransfer(t *testing.T, seed byte, nonce uint64, to types.Address,
 		To:        &toG,
 		Value:     valueWei,
 	})
-	signer := gethTypes.LatestSignerForChainID(big.NewInt(testChainID))
+	return marshalTx(t, signTxWithKey(t, tx, big.NewInt(testChainID), key))
+}
+
+// loadDevKey 加载种子对应的 secp256k1 私钥（与 mkFundedAddr 同源）。
+func loadDevKey(t *testing.T, seed byte) *ecdsa.PrivateKey {
+	t.Helper()
+	key, err := gethCrypto.HexToECDSA(hexStr(seedBytes(seed)))
+	if err != nil {
+		t.Fatalf("生成密钥失败: %v", err)
+	}
+	return key
+}
+
+// signTxWithKey 签名。
+func signTxWithKey(t *testing.T, tx *gethTypes.Transaction,
+	chainID *big.Int, key *ecdsa.PrivateKey) *gethTypes.Transaction {
+	t.Helper()
+	signer := gethTypes.LatestSignerForChainID(chainID)
 	signed, err := gethTypes.SignTx(tx, signer, key)
 	if err != nil {
 		t.Fatalf("签名失败: %v", err)
 	}
+	return signed
+}
+
+// marshalTx 序列化。
+func marshalTx(t *testing.T, signed *gethTypes.Transaction) []byte {
+	t.Helper()
 	raw, err := signed.MarshalBinary()
 	if err != nil {
 		t.Fatalf("序列化失败: %v", err)
