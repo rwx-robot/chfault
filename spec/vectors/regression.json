@@ -1,0 +1,81 @@
+{
+  "_comment": "回归基线向量。由 cmd/genvectors 生成后冻结，用于检测重构导致的行为变化。这些值不是权威值（不证明与以太坊兼容），只证明『实现没变』。权威向量见 crypto.json。",
+  "_spec": "spec/01-编码原语.md, spec/20-区块头与区块体.md, spec/40-状态与账户.md",
+  "_generated_by": "go run ./cmd/genvectors",
+  "vectors": [
+    {
+      "name": "merkle_empty",
+      "description": "空列表的 Merkle 根必须是 32 字节零（spec/01 §7）",
+      "expected": {
+        "merkle_root": "0x0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "name": "merkle_single",
+      "description": "单叶子的 Merkle 根等于该叶子本身",
+      "expected": {
+        "leaf": "0x6f5d0040b4021f357c4da9aefca7f0dd83a99f294d1f5fe63e61eb57dcbd124a",
+        "merkle_root": "0x6f5d0040b4021f357c4da9aefca7f0dd83a99f294d1f5fe63e61eb57dcbd124a"
+      }
+    },
+    {
+      "name": "merkle_three_odd",
+      "description": "3 个叶子（奇数）：最后一个与自己配对，h = keccak(x ‖ x)",
+      "expected": {
+        "leaf_a": "0x3ac225168df54212a25c1c01fd35bebfea408fdac2e31ddd6f80a4bbf9a5f1cb",
+        "leaf_b": "0xb5553de315e0edf504d9150af82dafa5c4667fa618ed0a6f19c69b41166c5510",
+        "leaf_c": "0x0b42b6393c1f53060fe3ddbfcd7aadcca894465a5a438f69c87d790b2299b9b2",
+        "merkle_root": "0x905b17edcf8b6fb1415b32cdbab3e02c2c93f80a345de80ea2bbf9feba9f5a55"
+      }
+    },
+    {
+      "name": "merkle_five_odd",
+      "description": "5 个叶子（奇数，跨两层补位）",
+      "expected": {
+        "merkle_root": "0x689da7be451a70d98698cdbfc0a4e722ea1d69024cd6754255560a708cc6be49"
+      }
+    },
+    {
+      "name": "state_single_account",
+      "description": "单个账户，余额 1 ETH",
+      "expected": {
+        "account": "0x0100000000000000000000000000000000000000",
+        "balance": "1000000000000000000",
+        "state_root": "0x970afff7f9eaa6b8e297f1996016a6879e98516c43ddddce5570f44403925c4a"
+      }
+    },
+    {
+      "name": "state_two_accounts",
+      "description": "两个账户，含 nonce。验证排序后序列化的确定性",
+      "expected": {
+        "state_root": "0xae50a05e9316f098f9f51b5f8434ebb4eb2a9b924e2f8bdbea3e40433db5dc56"
+      }
+    },
+    {
+      "name": "state_empty",
+      "description": "空状态的根（所有账户为空，EIP-158 全部跳过）",
+      "expected": {
+        "state_root": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+      }
+    },
+    {
+      "name": "block_header_genesis",
+      "description": "创世区块头的编码与哈希",
+      "expected": {
+        "block_hash": "0x799c64ff9eaa764ac1a339666f1e0f409b6ac4ae03232253af658df35b886e2b",
+        "encoding_len": "515"
+      }
+    },
+    {
+      "name": "block_three_transfers",
+      "description": "含 3 笔 EIP-1559 转账的区块：txRoot 与 receiptRoot",
+      "expected": {
+        "receipt_root": "0x9c8ad7397d26cd969bd3e61d43a2ca49f288a38b146c51df29f63dca9bb0d59f",
+        "tx_0_hash": "0xc56a8c68c439bea2b452cfc9f419b0817734ecdc020bdec92b6a123f5b4233e7",
+        "tx_1_hash": "0x2e963db38df19f9ae5365ced6d681aaf3626a8ce454a347535ff794090819e3a",
+        "tx_2_hash": "0x6e8bfa1a74890deab7160c9651e040a1a36e8bc4c0685d70824b53d60c614a54",
+        "tx_root": "0x9313edf46accf5a3cc2b2b29f03794c31bc95f212ddaabd82db2d16751dd1648"
+      }
+    }
+  ]
+}

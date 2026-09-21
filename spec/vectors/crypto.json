@@ -1,0 +1,82 @@
+{
+  "_comment": "密码学原语的权威测试向量。这些值来自以太坊规范与公开的测试套件，不是由 chfault 自己生成后回填 —— 否则测试只是在验证『自己与自己一致』。",
+  "_spec": "spec/01-编码原语.md",
+  "_generated_by": "人工整理自以太坊官方公开测试向量",
+
+  "keccak256": [
+    {
+      "name": "empty",
+      "input_hex": "",
+      "expected": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+      "source": "以太坊黄皮书 / Solidity 文档"
+    },
+    {
+      "name": "abc",
+      "input_ascii": "abc",
+      "input_hex": "0x616263",
+      "expected": "0x4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45",
+      "source": "公开测试向量"
+    },
+    {
+      "name": "quick_brown_fox",
+      "input_ascii": "The quick brown fox jumps over the lazy dog",
+      "expected": "0x4d741b6f1eb29cb2a9b9911c82f56fa8d73b04959d3d9d222895df6c0b28aa15",
+      "source": "公开测试向量"
+    },
+    {
+      "name": "erc20_transfer_event_signature",
+      "input_ascii": "Transfer(address,address,uint256)",
+      "expected": "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+      "source": "ERC-20 标准，此 topic 是所有 ERC20 转账日志的第一个 topic。是链上被引用最多的哈希之一。",
+      "why_important": "验证 keccak256 而不是 SHA3-256。若实现用错，此向量会失败。"
+    },
+    {
+      "name": "erc20_approval_event_signature",
+      "input_ascii": "Approval(address,address,uint256)",
+      "expected": "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925",
+      "source": "ERC-20 标准"
+    },
+    {
+      "name": "empty_code_hash",
+      "description": "keccak256(\"\")，即 EOA 的 codeHash",
+      "input_hex": "",
+      "expected": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+      "source": "以太坊 EMPTY_CODE_HASH 常量"
+    },
+    {
+      "name": "empty_storage_root",
+      "description": "空 MPT 的根 = keccak256(rlp(0x80))，即 keccak256(0x80)",
+      "input_hex": "0x80",
+      "expected": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+      "source": "以太坊 EMPTY_ROOT_HASH 常量"
+    }
+  ],
+
+  "address_derivation": [
+    {
+      "name": "privkey_1",
+      "description": "从私钥 1 派生地址。这是最广为人知的测试向量（Hardhat / Anvil 的第一个账户）。",
+      "private_key": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "public_key_uncompressed": "0x0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8",
+      "address": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+      "address_eip55": "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+      "source": "secp256k1 标准测试向量"
+    },
+    {
+      "name": "privkey_2",
+      "private_key": "0x0000000000000000000000000000000000000000000000000000000000000002",
+      "address": "0x2b5ad5c4795c026514f8317c7a215e218dccd6cf",
+      "address_eip55": "0x2B5AD5c4795c026514f8317c7a215E218DcCD6cF",
+      "source": "secp256k1 标准测试向量"
+    }
+  ],
+
+  "bloom": [
+    {
+      "name": "empty",
+      "input_logs": [],
+      "expected": "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "note": "空日志产生全零 bloom（256 字节 = 512 个 hex 字符）"
+    }
+  ]
+}

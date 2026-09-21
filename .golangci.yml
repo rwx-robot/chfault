@@ -1,0 +1,105 @@
+# chfault 的 golangci-lint 配置
+#
+# 关键：depguard 强制依赖方向（docs/blueprint/02 §2.3 的四条硬规则）。
+# 违反依赖方向会导致循环依赖或架构腐化，必须在 CI 拦截。
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - revive
+    - gocritic
+    - bodyclose
+    - depguard
+    - misspell
+    - unconvert
+    - whitespace
+
+linters-settings:
+  depguard:
+    rules:
+      # 规则 1：chain 不得依赖 consensus（防止循环依赖）
+      core-no-consensus:
+        files:
+          - "**/chain/**"
+        deny:
+          - pkg: "github.com/chfault/chfault/consensus"
+            desc: "chain 不得依赖 consensus（依赖方向规则 1）"
+
+      # 规则 2：consensus 与 vm 不得依赖 network（应通过注入端口）
+      consensus-vm-no-network:
+        files:
+          - "**/consensus/**"
+          - "**/vm/**"
+        deny:
+          - pkg: "github.com/chfault/chfault/network"
+            desc: "通过注入 MessageSink，不得直接依赖 network（依赖方向规则 2）"
+
+      # 规则 3：types 是叶子节点
+      types-is-leaf:
+        files:
+          - "**/types/**"
+        deny:
+          - pkg: "github.com/chfault/chfault/crypto"
+            desc: "types 是叶子包，不得依赖任何其他 chfault 包（依赖方向规则 3）"
+          - pkg: "github.com/chfault/chfault/storage"
+            desc: "types 是叶子包"
+          - pkg: "github.com/chfault/chfault/state"
+            desc: "types 是叶子包"
+
+      # 规则 4：核心包不得直接用 time（必须用注入的 Clock）
+      no-time-in-core:
+        files:
+          - "**/consensus/**"
+          - "**/state/**"
+          - "**/chain/**"
+          - "**/vm/**"
+          - "**/mempool/**"
+        deny:
+          - pkg: "time"
+            desc: "使用注入的 Clock 或区块头 timestamp（确定性契约 C3）"
+
+      # 规则 5：核心包不得用 math/rand
+      no-rand-in-core:
+        files:
+          - "**/consensus/**"
+          - "**/state/**"
+          - "**/chain/**"
+          - "**/vm/**"
+          - "**/crypto/**"
+          - "**/mempool/**"
+        deny:
+          - pkg: "math/rand"
+            desc: "使用确定性派生 DeriveRandomness（确定性契约 C4）"
+
+  revive:
+    rules:
+      - name: exported
+        disabled: true # M0 阶段不强制每个导出符号都有注释
+
+  gocritic:
+    disabled-checks:
+      - hugeParam # 大结构体值传递在本项目是刻意的（避免堆分配）
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    # 测试文件放宽：允许使用 time（测试计时）
+    - path: _test\.go
+      linters:
+        - depguard
+
+# ─── geth 依赖白名单说明（ADR-016，2026-09-17）──────────────────
+# geth（go-ethereum，LGPLv3）的 import 仅允许出现在：
+#   - vm/     ：EVM 解释器（core/vm）、交易解码（core/types）、ApplyMessage（core）
+#   - chain/  ：无（M1 阶段 chain 未引 geth；未来如需也必须先更新本文件与本注释）
+# 其余任何包引入 geth 都会破坏"可替换引擎"的架构承诺（ADR-016）。
+# determinism linter 之外，这里未用 depguard 硬编码 geth 黑名单，
+# 因为白名单语义（仅两个包可用）用 depguard 的 files+allow 表达更易漂移；
+# M2 引入 CI 架构测试时补上强制检查（docs/blueprint/02 §2.3 规则 3）。

@@ -1,0 +1,26 @@
+chfault
+Copyright (C) 2026 chfault contributors
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+完整许可证文本见 ../docs/adr/README.md（ADR-016）与
+https://www.gnu.org/licenses/lgpl-3.0.txt
+
+---
+
+为何是 LGPLv3：chfault 复用 go-ethereum 的 core/vm、core/types、
+core（ApplyMessage）与 trie 包（同样为 LGPLv3，见 ADR-016 的逐文件
+审计结论）。LGPLv3 允许任何许可的软件**链接**使用本框架
+—— 基于 chfault 构建的链与应用可以是任意许可；
+仅当修改 chfault 自身时，修改部分需以同样许可开源。

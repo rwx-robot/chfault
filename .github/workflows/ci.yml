@@ -1,0 +1,120 @@
+# chfault CI
+#
+# 核心思想：把"确定性"这类约束变成 CI 检查，而不是靠人（或 AI）自觉。
+# 尤其是 determinism linter —— 它拦截的问题在单元测试中永远不会暴露。
+
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  GO_VERSION: "1.24"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 静态检查：编译、vet、依赖方向、确定性
+  # ---------------------------------------------------------------------------
+  static:
+    name: 静态检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: determinism linter（拦截 range map / time.Now / rand）
+        run: |
+          go build -o bin/determinism ./cmd/determinism
+          ./bin/determinism ./...
+
+      - name: golangci-lint（含 depguard 依赖方向规则）
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
+      - name: 检查仓库内无 Node.js / TypeScript（ADR-018）
+        run: |
+          if find . -name package.json -o -name node_modules -o -name tsconfig.json | grep -q .; then
+            echo "❌ 违规：仓库内不允许出现 Node.js / TypeScript 相关文件（ADR-018）"
+            find . -name package.json -o -name node_modules -o -name tsconfig.json
+            exit 1
+          fi
+          echo "✅ 无 Node.js / TypeScript 文件"
+
+  # ---------------------------------------------------------------------------
+  # 测试：单元、竞态、多环境一致性
+  # ---------------------------------------------------------------------------
+  test:
+    name: 测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: 单元测试
+        run: go test ./...
+
+      - name: 竞态检测
+        run: go test -race ./...
+
+      # ★ 本项目的独门检查
+      # 同一份输入在不同 GOMAXPROCS / GOGC 下必须产出完全相同的 stateRoot。
+      # 能一次性抓出：map 顺序依赖、goroutine 竞态、调度顺序依赖。
+      - name: 多环境一致性（确定性）
+        run: make test-determinism
+
+      - name: 回归基线校验（实现行为未被意外改变）
+        run: make vectors-check
+
+  # ---------------------------------------------------------------------------
+  # 交叉编译：验证"静态单二进制"目标（ADR-002）
+  # ---------------------------------------------------------------------------
+  cross-build:
+    name: 交叉编译
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: 四个平台全部编译
+        run: make cross-build
+
+  # ---------------------------------------------------------------------------
+  # 安全：漏洞扫描
+  # ---------------------------------------------------------------------------
+  security:
+    name: 安全扫描
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
